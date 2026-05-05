@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  # LocalStack for local AWS testing (optional)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: rearc-quest-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,lambda,sqs,events,cloudwatch
+      - DEBUG=0
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - "${TMPDIR}:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  # Python environment for development
+  python:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rearc-quest-dev
+    volumes:
+      - .:/app
+      - /app/venv
+    working_dir: /app
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: true
