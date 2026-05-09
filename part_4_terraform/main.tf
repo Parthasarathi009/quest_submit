@@ -2,7 +2,7 @@
 
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -82,7 +82,7 @@ resource "aws_sqs_queue" "analytics_queue" {
   name                       = "rearc-quest-analytics-queue"
   delay_seconds              = 0
   max_message_size           = 262144
-  message_retention_seconds  = 1209600  # 14 days
+  message_retention_seconds  = 1209600 # 14 days
   receive_wait_time_seconds  = 20
   visibility_timeout_seconds = 300
 
@@ -263,7 +263,7 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
   event_source_arn = aws_sqs_queue.analytics_queue.arn
   function_name    = aws_lambda_function.analytics.arn
   batch_size       = 10
-  
+
   # Only process messages when function completes
   function_response_types = ["ReportBatchItemFailures"]
 }

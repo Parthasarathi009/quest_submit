@@ -1,44 +1,35 @@
-# PowerShell build script for Lambda packages (Windows)
-
 Write-Host "Building Lambda deployment packages..."
 
-# Clean up old packages
-Remove-Item -Force "combined_lambda.zip" -ErrorAction SilentlyContinue
-Remove-Item -Force "analytics_lambda.zip" -ErrorAction SilentlyContinue
-Remove-Item -Force "python_dependencies.zip" -ErrorAction SilentlyContinue
+Remove-Item -Force "combined_lambda.zip","analytics_lambda.zip","python_dependencies.zip" -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue
 
-# Create temp directories
-New-Item -ItemType Directory -Force -Path "build\lambda" | Out-Null
-New-Item -ItemType Directory -Force -Path "build\deps" | Out-Null
+$packageRoot = "build\package"
+$depsRoot = "build\deps"
 
-# Copy Lambda functions
-Copy-Item "lambda_functions\combined_lambda.py" "build\lambda\"
-Copy-Item "lambda_functions\analytics_lambda.py" "build\lambda\"
-Copy-Item "part_1_s3_sync\sync_bls_data.py" "build\lambda\"
-Copy-Item "part_2_api\fetch_population_data.py" "build\lambda\"
-Copy-Item "part_3_analytics\analytics.py" "build\lambda\"
+New-Item -ItemType Directory -Force -Path "$packageRoot\lambda_functions" | Out-Null
+New-Item -ItemType Directory -Force -Path "$packageRoot\part_1_s3_sync" | Out-Null
+New-Item -ItemType Directory -Force -Path "$packageRoot\part_2_api" | Out-Null
+New-Item -ItemType Directory -Force -Path "$packageRoot\part_3_analytics" | Out-Null
+New-Item -ItemType Directory -Force -Path $depsRoot | Out-Null
 
-# Create __init__.py files
-New-Item -Path "build\lambda\__init__.py" -ItemType File | Out-Null
-New-Item -Path "build\lambda\part_1_s3_sync\__init__.py" -ItemType File -ErrorAction SilentlyContinue | Out-Null
-New-Item -Path "build\lambda\part_2_api\__init__.py" -ItemType File -ErrorAction SilentlyContinue | Out-Null
-New-Item -Path "build\lambda\part_3_analytics\__init__.py" -ItemType File -ErrorAction SilentlyContinue | Out-Null
+Copy-Item "lambda_functions\combined_lambda.py" "$packageRoot\lambda_functions\"
+Copy-Item "lambda_functions\analytics_lambda.py" "$packageRoot\lambda_functions\"
+Copy-Item "part_1_s3_sync\sync_bls_data.py" "$packageRoot\part_1_s3_sync\"
+Copy-Item "part_2_api\fetch_population_data.py" "$packageRoot\part_2_api\"
+Copy-Item "part_3_analytics\analytics.py" "$packageRoot\part_3_analytics\"
 
-# Install dependencies
-pip install --target "build\deps" -r requirements.txt
+New-Item -Path "$packageRoot\lambda_functions\__init__.py" -ItemType File -Force | Out-Null
+New-Item -Path "$packageRoot\part_1_s3_sync\__init__.py" -ItemType File -Force | Out-Null
+New-Item -Path "$packageRoot\part_2_api\__init__.py" -ItemType File -Force | Out-Null
+New-Item -Path "$packageRoot\part_3_analytics\__init__.py" -ItemType File -Force | Out-Null
 
-# Create Lambda packages
-# Using Compress-Archive (built-in PowerShell)
-Compress-Archive -Path "build\lambda\*" -DestinationPath "combined_lambda.zip" -Force
-Compress-Archive -Path "build\lambda\*" -DestinationPath "analytics_lambda.zip" -Force
-Compress-Archive -Path "build\deps\*" -DestinationPath "python_dependencies.zip" -Force
+pip install --target $depsRoot -r requirements.txt
 
-# Clean up
+Compress-Archive -Path "$packageRoot\*" -DestinationPath "combined_lambda.zip" -Force
+Copy-Item -Path "combined_lambda.zip" -Destination "analytics_lambda.zip" -Force
+Compress-Archive -Path "$depsRoot\*" -DestinationPath "python_dependencies.zip" -Force
+
 Remove-Item -Recurse -Force "build"
 
 Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "Generated packages:"
-Write-Host "  - combined_lambda.zip"
-Write-Host "  - analytics_lambda.zip"
-Write-Host "  - python_dependencies.zip"
+Write-Host "Generated packages:`n  - combined_lambda.zip`n  - analytics_lambda.zip`n  - python_dependencies.zip"

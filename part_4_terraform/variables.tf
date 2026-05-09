@@ -34,7 +34,7 @@ variable "tags" {
   description = "Common tags to apply to resources"
   type        = map(string)
   default = {
-    Project     = "rearc-quest"
-    ManagedBy   = "Terraform"
+    Project   = "rearc-quest"
+    ManagedBy = "Terraform"
   }
 }

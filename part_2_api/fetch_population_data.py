@@ -27,7 +27,7 @@ PARAMS = {
     "measures": "Population"
 }
 
-S3_BUCKET = os.environ.get("S3_BUCKET", "rearc-quest-data")
+S3_BUCKET = os.environ.get("S3_BUCKET", "parth-rearc-quest-data-2026")
 S3_KEY = "population_data/population_data.json"
 
 HEADERS = {
@@ -115,16 +115,58 @@ class PopulationDataFetcher:
             logger.error(f"Error saving data to S3: {e}")
             return False
     
+    def save_locally(self, data: Dict[str, Any], filename: str = "population_data.json") -> bool:
+        """
+        Save JSON data locally as fallback when S3 fails.
+        
+        Args:
+            data: Dictionary to save as JSON
+            filename: Local filename to save to
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Add metadata to the data
+            data_with_metadata = {
+                'data': data.get('data', []),
+                'metadata': {
+                    'fetched_at': datetime.now().isoformat(),
+                    'api_url': API_URL,
+                    'parameters': PARAMS,
+                    'saved_locally': True
+                }
+            }
+            
+            # Save to local file
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(data_with_metadata, f, indent=2)
+            
+            logger.info(f"Successfully saved data locally to {filename}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving data locally: {e}")
+            return False
+    
     def fetch_and_save(self) -> bool:
         """
-        Fetch data from API and save to S3.
+        Fetch data from API and save to S3, with local fallback.
         
         Returns:
             True if successful, False otherwise
         """
         try:
             data = self.fetch_population_data()
-            return self.save_to_s3(data)
+            
+            # Try S3 first
+            if self.save_to_s3(data):
+                return True
+            
+            # Fallback to local save
+            logger.warning("S3 save failed, saving locally instead")
+            return self.save_locally(data)
+            
         except Exception as e:
             logger.error(f"Fetch and save operation failed: {e}")
             return False

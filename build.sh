@@ -1,44 +1,39 @@
-# Build and deployment helper script for AWS Lambda packages
-
 #!/bin/bash
 set -e
 
 echo "Building Lambda deployment packages..."
 
-# Clean up old packages
 rm -f combined_lambda.zip analytics_lambda.zip python_dependencies.zip
+rm -rf build/
 
-# Create temp directories
-mkdir -p build/lambda build/deps
+mkdir -p build/package/lambda_functions
+mkdir -p build/package/part_1_s3_sync
+mkdir -p build/package/part_2_api
+mkdir -p build/package/part_3_analytics
+mkdir -p build/deps
 
-# Copy Lambda functions
-cp lambda_functions/combined_lambda.py build/lambda/
-cp lambda_functions/analytics_lambda.py build/lambda/
-cp part_1_s3_sync/sync_bls_data.py build/lambda/
-cp part_2_api/fetch_population_data.py build/lambda/
-cp part_3_analytics/analytics.py build/lambda/
+cp lambda_functions/combined_lambda.py build/package/lambda_functions/
+cp lambda_functions/analytics_lambda.py build/package/lambda_functions/
+cp part_1_s3_sync/sync_bls_data.py build/package/part_1_s3_sync/
+cp part_2_api/fetch_population_data.py build/package/part_2_api/
+cp part_3_analytics/analytics.py build/package/part_3_analytics/
 
-# Create __init__.py files
-touch build/lambda/__init__.py
-touch build/lambda/part_1_s3_sync/__init__.py
-touch build/lambda/part_2_api/__init__.py
-touch build/lambda/part_3_analytics/__init__.py
+touch build/package/lambda_functions/__init__.py
+touch build/package/part_1_s3_sync/__init__.py
+touch build/package/part_2_api/__init__.py
+touch build/package/part_3_analytics/__init__.py
 
-# Install dependencies
 pip install --target build/deps -r requirements.txt
 
-# Create combined Lambda package
-cd build/lambda
+cd build/package
 zip -r ../../combined_lambda.zip .
-zip -r ../../analytics_lambda.zip . -x "*.pyc"
+cp ../../combined_lambda.zip ../../analytics_lambda.zip
 cd ../..
 
-# Create dependencies layer
 cd build/deps
 zip -r ../../python_dependencies.zip .
 cd ../..
 
-# Clean up
 rm -rf build/
 
 echo "Build complete!"

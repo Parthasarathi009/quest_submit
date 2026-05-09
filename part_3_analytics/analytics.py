@@ -24,13 +24,92 @@ class DataAnalytics:
     def __init__(self):
         self.bls_data = None
         self.population_data = None
+    
+    def clean_bls_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean BLS DataFrame: strip whitespace, convert types, handle data quality issues.
+        
+        Args:
+            df: Raw BLS DataFrame
+            
+        Returns:
+            Cleaned DataFrame
+        """
+        try:
+            logger.info("Cleaning BLS data...")
+            
+            # Clean column names (remove leading/trailing whitespace)
+            df.columns = df.columns.str.strip()
+            
+            # Clean string columns (remove leading/trailing whitespace from values)
+            string_columns = ['series_id', 'period', 'footnote_codes']
+            for col in string_columns:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.strip()
+            
+            # Convert numeric columns
+            if 'year' in df.columns:
+                df['year'] = pd.to_numeric(df['year'], errors='coerce')
+            
+            if 'value' in df.columns:
+                df['value'] = pd.to_numeric(df['value'], errors='coerce')
+            
+            # Remove rows with invalid data
+            df = df.dropna(subset=['series_id', 'year', 'period'])
+            
+            logger.info(f"BLS data cleaned: {len(df)} rows, {len(df.columns)} columns")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error cleaning BLS data: {e}")
+            raise
+    
+    def clean_population_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean Population DataFrame: normalize column names, convert types.
+        
+        Args:
+            df: Raw Population DataFrame
+            
+        Returns:
+            Cleaned DataFrame
+        """
+        try:
+            logger.info("Cleaning population data...")
+            
+            # Clean column names
+            df.columns = df.columns.str.strip()
+            
+            # Clean string columns
+            string_columns = ['Nation', 'Year']
+            for col in string_columns:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.strip()
+            
+            # Convert numeric columns
+            if 'Year' in df.columns:
+                df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
+            
+            if 'Population' in df.columns:
+                df['Population'] = pd.to_numeric(df['Population'], errors='coerce')
+            
+            # Remove rows with invalid data
+            df = df.dropna(subset=['Year'])
+            
+            logger.info(f"Population data cleaned: {len(df)} rows, {len(df.columns)} columns")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error cleaning population data: {e}")
+            raise
         
     def load_bls_csv(self, file_path: str) -> pd.DataFrame:
         """Load BLS CSV file as DataFrame."""
         try:
             logger.info(f"Loading BLS data from {file_path}")
-            df = pd.read_csv(file_path, sep='\t')
-            logger.info(f"Loaded BLS data with shape: {df.shape}")
+            df = pd.read_csv(file_path, sep='\t', dtype=str)  # Load as strings first
+            df = self.clean_bls_data(df)  # Clean the data
+            logger.info(f"Loaded and cleaned BLS data with shape: {df.shape}")
             return df
         except Exception as e:
             logger.error(f"Error loading BLS data: {e}")
@@ -41,8 +120,9 @@ class DataAnalytics:
         try:
             logger.info(f"Loading BLS data from S3: s3://{bucket}/{key}")
             response = s3_client.get_object(Bucket=bucket, Key=key)
-            df = pd.read_csv(io.BytesIO(response['Body'].read()), sep='\t')
-            logger.info(f"Loaded BLS data with shape: {df.shape}")
+            df = pd.read_csv(io.BytesIO(response['Body'].read()), sep='\t', dtype=str)
+            df = self.clean_bls_data(df)  # Clean the data
+            logger.info(f"Loaded and cleaned BLS data with shape: {df.shape}")
             return df
         except Exception as e:
             logger.error(f"Error loading BLS data from S3: {e}")
@@ -58,7 +138,8 @@ class DataAnalytics:
             # Extract the data records
             records = data.get('data', []) if isinstance(data, dict) else data
             df = pd.DataFrame(records)
-            logger.info(f"Loaded population data with shape: {df.shape}")
+            df = self.clean_population_data(df)  # Clean the data
+            logger.info(f"Loaded and cleaned population data with shape: {df.shape}")
             return df
         except Exception as e:
             logger.error(f"Error loading population data: {e}")
@@ -74,7 +155,8 @@ class DataAnalytics:
             # Extract the data records
             records = data.get('data', []) if isinstance(data, dict) else data
             df = pd.DataFrame(records)
-            logger.info(f"Loaded population data with shape: {df.shape}")
+            df = self.clean_population_data(df)  # Clean the data
+            logger.info(f"Loaded and cleaned population data with shape: {df.shape}")
             return df
         except Exception as e:
             logger.error(f"Error loading population data from S3: {e}")
@@ -131,7 +213,7 @@ class DataAnalytics:
         Report 2: For each series_id, find the best year (max sum of values per year).
         
         Args:
-            df: BLS DataFrame
+            df: BLS DataFrame (already cleaned)
             
         Returns:
             DataFrame with results
@@ -139,17 +221,9 @@ class DataAnalytics:
         try:
             logger.info("Generating Report 2: Best Year per Series ID")
             
-            # Strip whitespace from string columns
-            for col in df.select_dtypes(include=['object']).columns:
-                df[col] = df[col].str.strip()
-            
-            # Convert value to numeric
+            # Data is already cleaned, just ensure proper types
             df['value'] = pd.to_numeric(df['value'], errors='coerce')
-            
-            # Extract year from period if needed
-            if 'year' not in df.columns and 'period' in df.columns:
-                # Year might be embedded in period or another column
-                logger.warning("Year column not found in BLS data")
+            df['year'] = pd.to_numeric(df['year'], errors='coerce')
             
             # Group by series_id and year, sum values
             yearly_sum = df.groupby(['series_id', 'year'])['value'].sum().reset_index()
@@ -158,6 +232,9 @@ class DataAnalytics:
             best_year = yearly_sum.loc[yearly_sum.groupby('series_id')['value'].idxmax()]
             best_year.columns = ['series_id', 'year', 'value']
             best_year = best_year.reset_index(drop=True)
+            
+            # Round values to 2 decimal places
+            best_year['value'] = best_year['value'].round(2)
             
             logger.info(f"Report 2 complete: {len(best_year)} series found")
             return best_year
@@ -171,8 +248,8 @@ class DataAnalytics:
         Report 3: For series_id=PRS30006032 and period=Q01, show value and population.
         
         Args:
-            bls_df: BLS DataFrame
-            pop_df: Population DataFrame
+            bls_df: BLS DataFrame (already cleaned)
+            pop_df: Population DataFrame (already cleaned)
             
         Returns:
             DataFrame with combined results
@@ -180,12 +257,11 @@ class DataAnalytics:
         try:
             logger.info("Generating Report 3: Combined BLS and Population Analysis")
             
-            # Strip whitespace
-            for col in bls_df.select_dtypes(include=['object']).columns:
-                bls_df[col] = bls_df[col].str.strip()
-            
-            for col in pop_df.select_dtypes(include=['object']).columns:
-                pop_df[col] = pop_df[col].str.strip()
+            # Data is already cleaned, just ensure proper types
+            bls_df['value'] = pd.to_numeric(bls_df['value'], errors='coerce')
+            bls_df['year'] = pd.to_numeric(bls_df['year'], errors='coerce')
+            pop_df['Year'] = pd.to_numeric(pop_df['Year'], errors='coerce')
+            pop_df['Population'] = pd.to_numeric(pop_df['Population'], errors='coerce')
             
             # Filter BLS data
             filtered_bls = bls_df[
@@ -193,37 +269,20 @@ class DataAnalytics:
                 (bls_df['period'] == 'Q01')
             ].copy()
             
-            # Convert columns to numeric
-            filtered_bls['value'] = pd.to_numeric(filtered_bls['value'], errors='coerce')
-            filtered_bls['year'] = pd.to_numeric(filtered_bls['year'], errors='coerce')
-            
-            # Normalize population dataframe
+            # Normalize population dataframe for merging
             pop_df_copy = pop_df.copy()
-            if 'Year' in pop_df_copy.columns:
-                pop_df_copy['year'] = pd.to_numeric(pop_df_copy['Year'], errors='coerce')
-            
-            if 'Population' in pop_df_copy.columns:
-                pop_df_copy['population'] = pd.to_numeric(pop_df_copy['Population'], errors='coerce')
-                pop_col = 'population'
-            else:
-                pop_cols = [col for col in pop_df_copy.columns if 'population' in col.lower()]
-                if pop_cols:
-                    pop_df_copy['population'] = pd.to_numeric(pop_df_copy[pop_cols[0]], errors='coerce')
-                    pop_col = 'population'
-                else:
-                    pop_col = None
+            pop_df_copy['year'] = pop_df_copy['Year']  # Create year column for merging
             
             # Merge on year
-            if pop_col:
-                result = filtered_bls.merge(
-                    pop_df_copy[['year', pop_col]],
-                    on='year',
-                    how='left'
-                )
-                result = result[['series_id', 'year', 'period', 'value', pop_col]]
-                result.columns = ['series_id', 'year', 'period', 'value', 'Population']
-            else:
-                result = filtered_bls[['series_id', 'year', 'period', 'value']]
+            result = filtered_bls.merge(
+                pop_df_copy[['year', 'Population']],
+                on='year',
+                how='left'
+            )
+            result = result[['series_id', 'year', 'period', 'value', 'Population']]
+            
+            # Round values to 2 decimal places
+            result['value'] = result['value'].round(2)
             
             logger.info(f"Report 3 complete: {len(result)} records found")
             return result
@@ -242,14 +301,17 @@ class DataAnalytics:
             raise
 
 
-def generate_all_reports(bls_data_path: str, population_data_path: str, output_dir: str = "."):
-    """Generate all reports and save outputs."""
+def generate_all_reports_s3(s3_bucket: str, output_dir: str = "."):
+    """Generate all reports using data from S3."""
     try:
+        import boto3
+        s3_client = boto3.client('s3')
+        
         analytics = DataAnalytics()
         
-        # Load data
-        bls_df = analytics.load_bls_csv(bls_data_path)
-        pop_df = analytics.load_population_json(population_data_path)
+        # Load data from S3
+        bls_df = analytics.load_bls_from_s3(s3_client, s3_bucket, "bls_time_series/pr.data.0.Current")
+        pop_df = analytics.load_population_from_s3(s3_client, s3_bucket, "population_data/population_data.json")
         
         # Generate reports
         report_1 = analytics.report_1_population_stats(pop_df)
@@ -262,7 +324,7 @@ def generate_all_reports(bls_data_path: str, population_data_path: str, output_d
         analytics.save_report_to_csv(report_2, f"{output_dir}/report_2_best_year.csv")
         analytics.save_report_to_csv(report_3, f"{output_dir}/report_3_combined.csv")
         
-        logger.info("All reports generated successfully")
+        logger.info("All reports generated successfully from S3 data")
         return {
             'report_1': report_1,
             'report_2': report_2,
@@ -270,7 +332,7 @@ def generate_all_reports(bls_data_path: str, population_data_path: str, output_d
         }
         
     except Exception as e:
-        logger.error(f"Error generating reports: {e}")
+        logger.error(f"Error generating reports from S3: {e}")
         raise
 
 
@@ -278,10 +340,25 @@ if __name__ == "__main__":
     # Example usage - adjust paths as needed
     import sys
     
-    if len(sys.argv) > 2:
-        bls_path = sys.argv[1]
-        pop_path = sys.argv[2]
-        output_path = sys.argv[3] if len(sys.argv) > 3 else "."
-        generate_all_reports(bls_path, pop_path, output_path)
+    if len(sys.argv) > 1:
+        # Use S3 bucket from command line
+        s3_bucket = sys.argv[1]
+        output_path = sys.argv[2] if len(sys.argv) > 2 else "."
+        generate_all_reports_s3(s3_bucket, output_path)
     else:
-        print("Usage: python analytics.py <bls_csv_path> <population_json_path> [output_dir]")
+        # Default S3 bucket
+        s3_bucket = "parth-rearc-quest-data-2026"
+        output_path = "."
+        
+        print(f"Using default S3 bucket: {s3_bucket}")
+        print(f"Output directory: {output_path}")
+        
+        try:
+            generate_all_reports_s3(s3_bucket, output_path)
+        except FileNotFoundError as e:
+            print(f"S3 data not found: {e}")
+            print("Make sure Part 1 and Part 2 have uploaded data to S3")
+            print("Usage: python analytics.py <s3_bucket_name> [output_dir]")
+        except Exception as e:
+            print(f"Error: {e}")
+            print("Usage: python analytics.py <s3_bucket_name> [output_dir]")

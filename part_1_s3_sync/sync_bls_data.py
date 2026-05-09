@@ -6,6 +6,7 @@ Syncs BLS time series data to S3, keeping it up-to-date with the source.
 import os
 import boto3
 import requests
+from botocore.exceptions import ClientError
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -20,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 BLS_BASE_URL = "https://download.bls.gov/pub/time.series/pr/"
-S3_BUCKET = os.environ.get("S3_BUCKET", "rearc-quest-data")
+S3_BUCKET = os.environ.get("S3_BUCKET", "parth-rearc-quest-data-2026")
 S3_PREFIX = "bls_time_series"
 
 # User-Agent header for BLS compliance
 HEADERS = {
-    "User-Agent": "contact@yourcompany.com"  # Replace with your contact info
+    "User-Agent": "Parth S. <parth.ssu@bridgewater.edu>"
 }
 
 
@@ -54,9 +55,17 @@ class BLSDataSync:
                 def handle_starttag(self, tag, attrs):
                     if tag == 'a':
                         for attr, value in attrs:
-                            if attr == 'href' and value and not value.startswith('/'):
-                                if value not in ['..', '../']:
-                                    files[value] = {'name': value}
+                            if attr == 'href' and value:
+                                if value in ['..', '../']:
+                                    continue
+                                if value.startswith('/pub/time.series/pr/'):
+                                    filename = value.split('/')[-1]
+                                elif value.startswith('/'):
+                                    filename = value.lstrip('/')
+                                else:
+                                    filename = value
+                                if filename:
+                                    files[filename] = {'name': filename}
             
             parser = LinkParser()
             parser.feed(response.text)
@@ -147,16 +156,25 @@ class BLSDataSync:
     def sync(self):
         """Execute the full sync operation."""
         logger.info("Starting BLS data sync...")
+        logger.info(f"Using S3 bucket: {self.bucket}")
         
         try:
             # Ensure S3 bucket exists
             try:
                 self.s3_client.head_bucket(Bucket=self.bucket)
                 logger.info(f"S3 bucket {self.bucket} exists")
-            except self.s3_client.exceptions.NoSuchBucket:
-                logger.info(f"Creating S3 bucket {self.bucket}")
-                self.s3_client.create_bucket(Bucket=self.bucket)
-            
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code')
+                if error_code in ['404', 'NoSuchBucket']:
+                    logger.info(f"Creating S3 bucket {self.bucket}")
+                    self.s3_client.create_bucket(Bucket=self.bucket)
+                elif error_code == '403':
+                    logger.error(f"Access denied for S3 bucket {self.bucket}")
+                    raise
+                else:
+                    logger.error(f"S3 head bucket failed: {e}")
+                    raise
+
             # Get list of files from BLS
             remote_files = self.get_remote_file_list()
             current_files = set(remote_files.keys())
