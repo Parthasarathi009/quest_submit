@@ -31,7 +31,7 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "parth-rearc-quest-data-2026")
 S3_KEY = "population_data/population_data.json"
 
 HEADERS = {
-    "User-Agent": "contact@yourcompany.com"  # Replace with your contact info
+    "User-Agent": "parthasarathi.samantaray87@gmail.com"  # Replace with your contact info
 }
 
 

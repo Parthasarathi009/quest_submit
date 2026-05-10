@@ -26,7 +26,7 @@ S3_PREFIX = "bls_time_series"
 
 # User-Agent header for BLS compliance
 HEADERS = {
-    "User-Agent": "Parth S. <parth.ssu@bridgewater.edu>"
+    "User-Agent": "Parth S. <parthasarathi.samantaray87@gmail.com>"
 }
 
 
