@@ -1,3 +1,9 @@
+# Guard: make sure venv is active so we use the right python
+if (-not $env:VIRTUAL_ENV) {
+    Write-Error "No active virtualenv detected. Run: .\venv\Scripts\Activate.ps1 first."
+    exit 1
+}
+Write-Host "Using venv: $env:VIRTUAL_ENV" -ForegroundColor Cyan
 Write-Host "Building Lambda deployment packages..."
 
 Remove-Item -Force "combined_lambda.zip","analytics_lambda.zip","python_dependencies.zip" -ErrorAction SilentlyContinue
@@ -24,7 +30,10 @@ New-Item -Path "$packageRoot\part_2_api\__init__.py"       -ItemType File -Force
 New-Item -Path "$packageRoot\part_3_analytics\__init__.py" -ItemType File -Force | Out-Null
 
 # Install dependencies into the layer folder
-pip install --target $depsRoot -r requirements.txt
+# pip install --target $depsRoot -r requirements.txt
+# Use python -m pip to ensure we use the active venv's pip,
+# and --ignore-installed so venv packages don't interfere
+python -m pip install --target $depsRoot --ignore-installed -r requirements.txt
 
 # ---------------------------------------------------------------
 # FIX: Strip packages that are already built into the Lambda
