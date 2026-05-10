@@ -1,0 +1,1 @@
+{"statusCode": 200, "body": "{\n  \"timestamp\": \"2026-05-10T07:34:59.630780\",\n  \"part_1_bls_sync\": {\n    \"success\": true,\n    \"status\": \"Completed\"\n  },\n  \"part_2_population_api\": {\n    \"success\": true,\n    \"status\": \"Completed\"\n  }\n}"}

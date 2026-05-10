@@ -35,6 +35,20 @@ provider "aws" {
 # Data source for current AWS account
 data "aws_caller_identity" "current" {}
 
+# AWS managed layer for pandas + numpy (pre-built for Lambda Python 3.11)
+# This replaces the custom python_dependencies layer entirely.
+# No size limits, no build step needed for pandas/numpy.
+#data "aws_lambda_layer_version" "pandas" {
+#  layer_name = "AWSSDKPandas-Python311"
+#}
+
+locals {
+  # AWS managed pandas layer ARN for Python 3.11 in us-east-1
+  # Published by AWS account 336392948345
+  # Full list: https://aws-sdk-pandas.readthedocs.io/en/stable/layers.html
+  pandas_layer_arn = "arn:aws:lambda:us-east-1:336392948345:layer:AWSSDKPandas-Python311:23"
+}
+
 # S3 Bucket for data storage
 resource "aws_s3_bucket" "data_bucket" {
   bucket = "${var.s3_bucket_name}-${data.aws_caller_identity.current.account_id}"
@@ -168,10 +182,8 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "s3:DeleteObject",
           "s3:ListBucket",
           "s3:HeadBucket"
-          # CHANGE 1 (was line ~168): REMOVED "s3:CreateBucket"
-          # Lambda should never create buckets — Terraform owns that.
-          # This was causing a second unexpected S3 bucket to appear
-          # when the Lambda function ran and called create_bucket().
+          # s3:CreateBucket intentionally excluded -
+          # Terraform owns bucket creation, not Lambda.
         ]
         Resource = [
           aws_s3_bucket.data_bucket.arn,
@@ -200,48 +212,18 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
-# CHANGE 2 (was line ~201): NEW resource — upload the layer zip to S3 first.
-# AWS Lambda's direct upload limit is ~67MB (70167211 bytes).
-# Uploading via S3 bypasses that limit (up to 250MB unzipped is allowed).
-# This resource must be created BEFORE the layer version below.
-resource "aws_s3_object" "lambda_layer_zip" {
-  bucket = aws_s3_bucket.data_bucket.id
-  key    = "lambda-layers/python_dependencies.zip"
-  source = "python_dependencies.zip"
-  etag   = filemd5("python_dependencies.zip")  # triggers re-upload only when zip actually changes
-}
-
-# Lambda Layer for Python dependencies
-# CHANGE 3 (was line ~201-210): Replaced filename-based upload with S3-based upload.
-#
-# REMOVED:
-#   filename         = "python_dependencies.zip"
-#   source_code_hash = filebase64sha256("python_dependencies.zip")
-#   lifecycle { ignore_changes = [filename, source_code_hash] }
-#     ^^^ This was silently preventing layer updates on every terraform apply
-#
-# ADDED:
-#   s3_bucket  = pointing to the data bucket
-#   s3_key     = pointing to the object uploaded above
-#   depends_on = ensures the zip is in S3 before the layer is created
-resource "aws_lambda_layer_version" "dependencies" {
-  s3_bucket           = aws_s3_bucket.data_bucket.id
-  s3_key              = aws_s3_object.lambda_layer_zip.key
-  layer_name          = "rearc-quest-dependencies"
-  compatible_runtimes = ["python3.11"]
-
-  depends_on = [aws_s3_object.lambda_layer_zip]
-}
-
 # Lambda Function for combined data pipeline (Part 1 & 2)
+# requests and python-dotenv are bundled directly in the zip (see build.ps1).
+# pandas + numpy come from the AWS managed layer below.
 resource "aws_lambda_function" "combined_pipeline" {
-  filename      = "combined_lambda.zip"
-  function_name = "rearc-quest-combined-data-pipeline"
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "lambda_functions.combined_lambda.lambda_handler"
-  runtime       = "python3.11"
-  timeout       = 300
-  memory_size   = 512
+  filename         = "combined_lambda.zip"
+  function_name    = "rearc-quest-combined-data-pipeline"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_functions.combined_lambda.lambda_handler"
+  runtime          = "python3.11"
+  timeout          = 300
+  memory_size      = 512
+  source_code_hash = filebase64sha256("combined_lambda.zip")
 
   environment {
     variables = {
@@ -249,7 +231,7 @@ resource "aws_lambda_function" "combined_pipeline" {
     }
   }
 
-  layers = [aws_lambda_layer_version.dependencies.arn]
+  layers = [local.pandas_layer_arn]
 
   depends_on = [
     aws_iam_role_policy.lambda_policy,
@@ -259,13 +241,14 @@ resource "aws_lambda_function" "combined_pipeline" {
 
 # Lambda Function for analytics (Part 3)
 resource "aws_lambda_function" "analytics" {
-  filename      = "analytics_lambda.zip"
-  function_name = "rearc-quest-analytics"
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "lambda_functions.analytics_lambda.lambda_handler"
-  runtime       = "python3.11"
-  timeout       = 300
-  memory_size   = 512
+  filename         = "analytics_lambda.zip"
+  function_name    = "rearc-quest-analytics"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_functions.analytics_lambda.lambda_handler"
+  runtime          = "python3.11"
+  timeout          = 300
+  memory_size      = 512
+  source_code_hash = filebase64sha256("analytics_lambda.zip")
 
   environment {
     variables = {
@@ -273,7 +256,7 @@ resource "aws_lambda_function" "analytics" {
     }
   }
 
-  layers = [aws_lambda_layer_version.dependencies.arn]
+  layers = [local.pandas_layer_arn]
 
   depends_on = [
     aws_iam_role_policy.lambda_policy,
@@ -287,7 +270,6 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
   function_name    = aws_lambda_function.analytics.arn
   batch_size       = 10
 
-  # Only process messages when function completes
   function_response_types = ["ReportBatchItemFailures"]
 }
 
@@ -312,39 +294,4 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   function_name = aws_lambda_function.combined_pipeline.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.daily_schedule.arn
-}
-
-# CloudWatch Alarms
-resource "aws_cloudwatch_metric_alarm" "combined_lambda_errors" {
-  alarm_name          = "rearc-quest-combined-lambda-errors"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = "1"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "1"
-  alarm_description   = "Alert when combined pipeline Lambda has errors"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    FunctionName = aws_lambda_function.combined_pipeline.function_name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "analytics_lambda_errors" {
-  alarm_name          = "rearc-quest-analytics-lambda-errors"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = "1"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "1"
-  alarm_description   = "Alert when analytics Lambda has errors"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    FunctionName = aws_lambda_function.analytics.function_name
-  }
 }
