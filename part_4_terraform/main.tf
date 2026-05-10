@@ -167,8 +167,11 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "s3:PutObject",
           "s3:DeleteObject",
           "s3:ListBucket",
-          "s3:HeadBucket",
-          "s3:CreateBucket"
+          "s3:HeadBucket"
+          # CHANGE 1 (was line ~168): REMOVED "s3:CreateBucket"
+          # Lambda should never create buckets — Terraform owns that.
+          # This was causing a second unexpected S3 bucket to appear
+          # when the Lambda function ran and called create_bucket().
         ]
         Resource = [
           aws_s3_bucket.data_bucket.arn,
@@ -197,17 +200,37 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
+# CHANGE 2 (was line ~201): NEW resource — upload the layer zip to S3 first.
+# AWS Lambda's direct upload limit is ~67MB (70167211 bytes).
+# Uploading via S3 bypasses that limit (up to 250MB unzipped is allowed).
+# This resource must be created BEFORE the layer version below.
+resource "aws_s3_object" "lambda_layer_zip" {
+  bucket = aws_s3_bucket.data_bucket.id
+  key    = "lambda-layers/python_dependencies.zip"
+  source = "python_dependencies.zip"
+  etag   = filemd5("python_dependencies.zip")  # triggers re-upload only when zip actually changes
+}
+
 # Lambda Layer for Python dependencies
+# CHANGE 3 (was line ~201-210): Replaced filename-based upload with S3-based upload.
+#
+# REMOVED:
+#   filename         = "python_dependencies.zip"
+#   source_code_hash = filebase64sha256("python_dependencies.zip")
+#   lifecycle { ignore_changes = [filename, source_code_hash] }
+#     ^^^ This was silently preventing layer updates on every terraform apply
+#
+# ADDED:
+#   s3_bucket  = pointing to the data bucket
+#   s3_key     = pointing to the object uploaded above
+#   depends_on = ensures the zip is in S3 before the layer is created
 resource "aws_lambda_layer_version" "dependencies" {
-  filename            = "python_dependencies.zip"
+  s3_bucket           = aws_s3_bucket.data_bucket.id
+  s3_key              = aws_s3_object.lambda_layer_zip.key
   layer_name          = "rearc-quest-dependencies"
   compatible_runtimes = ["python3.11"]
-  source_code_hash    = filebase64sha256("python_dependencies.zip")
 
-  # Only create if file exists
-  lifecycle {
-    ignore_changes = [filename, source_code_hash]
-  }
+  depends_on = [aws_s3_object.lambda_layer_zip]
 }
 
 # Lambda Function for combined data pipeline (Part 1 & 2)
