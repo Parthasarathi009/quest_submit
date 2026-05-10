@@ -273,11 +273,11 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
   function_response_types = ["ReportBatchItemFailures"]
 }
 
-# EventBridge Rule for daily scheduled execution (2 AM UTC)
+# EventBridge Rule for daily scheduled execution (3 AM PST / 11 am UTC)
 resource "aws_cloudwatch_event_rule" "daily_schedule" {
   name                = "rearc-quest-daily-schedule"
-  description         = "Trigger combined data pipeline daily at 2 AM UTC"
-  schedule_expression = "cron(0 2 * * ? *)"
+  description         = "Trigger combined data pipeline daily at 3 AM PST"
+  schedule_expression = "cron(0 11 * * ? *)"
 }
 
 # EventBridge Target - Combined Lambda
